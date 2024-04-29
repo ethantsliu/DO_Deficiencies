@@ -1,0 +1,185 @@
+#azimuth -58, elevation 12
+import numpy as np
+import matplotlib.pyplot as plt
+np.random.seed(42)
+
+# Define the corrected function
+def function(positions, d):
+    a = 100
+    sum = 0
+    for i in range(d-1):
+        sum += a * ((positions[i+1] - positions[i]**2)**2
+                    + (positions[i] - 1)**2)
+    return sum
+    #Rosenbrock's Valley x_i in [-5, 10]
+
+    #Ackley x_i in [-5, 5]
+    # a = 20
+    # b = 0.2
+    # c = 2
+    # sum1 = 0
+    # sum2 = 0
+    # for pos in positions:
+    #     sum1 += pos ** 2
+    #     sum2 += np.cos(c * np.pi * pos)
+    # term1 = -a * np.exp(-b * np.sqrt(sum1 / d))
+    # term2 = -np.exp(sum2 / d)
+    # term3 = a + np.exp(1)
+    # return term1 + term2 + term3
+
+# Dimensions
+dimensions = 8
+
+# Number of nodes in the network
+num_nodes = 100 # Change the number of nodes as needed
+
+# Learning rate
+learning_rate = 0.01  # Reduced learning rate
+
+# Number of rounds
+num_rounds = 10000  # Increased number of rounds
+
+# Neighborhood radius (agents interact with neighbors within this radius)
+neighborhood_radius = 4.5 # Adjust as needed
+
+# Probability of a node being a straggler
+straggler_probability = 0  # Adjust as needed
+
+# Initial positions for each node
+initial_positions = np.random.rand(num_nodes, dimensions) * 10 - 5  # Random initial positions
+initial_positions = initial_positions.tolist()
+
+# Print initial values
+initial_avg_vals = [function(initial_positions[i], dimensions) for i in range(num_nodes)]
+initial_avg_val = np.mean(initial_avg_vals)
+print("System Average initial val: ", np.round(initial_avg_val, 3))
+
+# Initialize the paths for all nodes
+paths = [initial_positions.copy()]
+
+# Create a list to store the vals for each node
+vals = [[] for _ in range(num_nodes)]
+
+# Calculate the gradient
+def gradient(func, point, h=1e-5):
+    grad = np.zeros_like(point)
+    for i in range(len(point)):
+        # Perturb the point along the i-th axis
+        positions_plus = np.array(point)
+        positions_plus[i] += h
+        positions_minus = np.array(point)
+        positions_minus[i] -= h
+
+        # Calculate the gradient using finite differences
+        grad[i] = (func(positions_plus, dimensions) - func(positions_minus, dimensions)) / (2 * h)
+
+    return grad
+
+def clip_gradients(gradients, clip_value):
+    clipped_gradients = np.clip(gradients, -clip_value, clip_value)
+    return clipped_gradients
+
+# Perform decentralized stochastic gradient descent
+def run(probability, positions):
+    straggler_probability = probability
+    initial_positions = positions
+    for round in range(num_rounds):
+        updated_positions = initial_positions.copy()
+
+        # Generate a new list of stragglers for this round
+        stragglers = np.random.rand(num_nodes) <= straggler_probability
+
+        # Perform averaging of gradients with non-straggler neighbors
+        for i in range(num_nodes):
+            if not stragglers[i]:  # Skip this node if it is a straggler
+                neighbor_positions = []
+                for j in range(num_nodes):
+                    if i != j and not stragglers[j]:  # Skip if neighbor is a straggler
+                        distance = np.linalg.norm(np.array(updated_positions[i]) - np.array(updated_positions[j]))
+                        if distance <= neighborhood_radius:
+                            neighbor_positions.append(updated_positions[j])
+
+                if neighbor_positions:
+                    neighbor_positions.append(updated_positions[i]) # Add its own position
+                    average_neighbor_position = np.mean(neighbor_positions, axis=0)
+                    updated_positions[i] = average_neighbor_position
+
+                # Update using its own gradient
+                grad = gradient(function, initial_positions[i], h=1e-5)
+                grad = clip_gradients(grad, clip_value=1.0)  # Adjust the clip value as needed
+                updated_positions[i] -= learning_rate * grad
+
+
+            # Calculate the val and add it to the respective node's val list
+            node_val = function(updated_positions[i], dimensions)
+            vals[i].append(node_val)
+
+        initial_positions = updated_positions  # Update positions for the next epoch
+
+        # Append the current positions to the paths
+        paths.append(initial_positions.copy())
+    avg_vals = [vals[i][-1] for i in range(num_nodes)]
+    avg_val = np.mean(avg_vals)
+    l2_norm = np.linalg.norm(avg_val - 0)
+    return l2_norm
+
+l2_norms = []
+probabilities = [] # Increments of 0.05 for probabilities
+for i in range(11):
+    l2_norm = run(straggler_probability, initial_positions)
+    l2_norms.append(l2_norm)
+    probabilities.append(straggler_probability)
+    print(straggler_probability, ": ", l2_norm)
+    straggler_probability += 0.1
+    straggler_probability = round(straggler_probability, 3)
+
+# Create the plot
+plt.plot(probabilities, l2_norms)
+
+# Add labels and title
+plt.xlabel('Chance of Straggler')
+plt.ylabel('L2 Norms') # Lower L2 Norm is better
+plt.ylim(0, 10)
+plt.xlim(0, 1)
+plt.show()
+
+# # Create a 3D plot of the function
+# x = np.linspace(-5, 5, 100)  # Adjusted range for X
+# y = np.linspace(-5, 5, 100)  # Adjusted range for Y
+# X, Y = np.meshgrid(x, y)
+# Z = np.vectorize(function)(X, Y)
+#
+# # Calculate the final average val of the system
+# final_avg_vals = [vals[i][-1] for i in range(num_nodes)]
+# final_avg_val = np.mean(final_avg_vals)
+#
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+#
+# # Set the viewing angle for the 3D plot
+# ax.view_init(elev=12, azim=-58)
+#
+# ax.plot_surface(X, Y, Z, cmap='viridis', alpha=0.8)
+#
+# # Plot the convergence paths for all nodes
+# paths = np.array(paths)
+# for i in range(num_nodes):
+#     path = paths[:, i, :]
+#     ax.plot(path[:, 0], path[:, 1], 0, linewidth=2)
+#
+# ax.set_xlabel('X')
+# ax.set_ylabel('Y')
+# ax.set_zlabel('Z')
+# ax.set_title('Convergence Paths')
+#
+# # Plot the val over rounds for all nodes
+# fig2, ax2 = plt.subplots()
+# for i in range(num_nodes):
+#     ax2.plot(range(num_rounds), vals[i], label=f'Node {i + 1}')
+#
+# ax2.set_xlabel('Rounds')
+# ax2.set_ylabel('Values')
+# ax2.set_title('Values Over Rounds')
+# ax2.legend()
+#
+# plt.show()
