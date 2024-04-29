@@ -1,0 +1,173 @@
+#azimuth -58, elevation 12
+import numpy as np
+import matplotlib.pyplot as plt
+import networkx as nx
+np.random.seed(42)
+
+# Define the corrected function (Ackley)
+def function(positions, d):
+    a = 100
+    sum = 0
+    for i in range(d-1):
+        sum += a * ((positions[i+1] - positions[i]**2)**2
+                    + (positions[i] - 1)**2)
+    return sum
+    #Rosenbrock's Valley x_i in [-5, 10]
+
+    #Ackley x_i in [-5, 5]
+    # a = 20
+    # b = 0.2
+    # c = 2
+    # sum1 = 0
+    # sum2 = 0
+    # for pos in positions:
+    #     sum1 += pos ** 2
+    #     sum2 += np.cos(c * np.pi * pos)
+    # term1 = -a * np.exp(-b * np.sqrt(sum1 / d))
+    # term2 = -np.exp(sum2 / d)
+    # term3 = a + np.exp(1)
+    # return term1 + term2 + term3
+
+# Dimensions
+dimensions = 8
+
+# Number of nodes in the network
+num_nodes = 100  # Change the number of nodes as needed
+
+# Learning rate
+learning_rate = 0.01  # Reduced learning rate
+
+# Number of rounds
+num_rounds = 10000  # Increased number of rounds
+
+# Neighborhood radius (agents interact with neighbors within this radius)
+neighborhood_radius = 4.5 # Adjust as needed, 30% of input space
+
+# Probability of edge disconnections
+disconnect_chance = 0
+
+# Initial positions for each node
+initial_positions = np.random.rand(num_nodes, dimensions) * 10 - 5  # Random initial positions
+initial_positions = initial_positions.tolist()
+
+# Print initial values
+initial_avg_vals = [function(initial_positions[i], dimensions) for i in range(num_nodes)]
+initial_avg_val = np.mean(initial_avg_vals)
+print("System Average initial val: ", np.round(initial_avg_val, 3))
+
+# Initialize the paths for all nodes
+paths = [initial_positions.copy()]
+
+# Create a list to store the vals for each node
+vals = [[] for _ in range(num_nodes)]
+
+# Calculate the gradient
+def gradient(func, point, h=1e-5):
+    grad = np.zeros_like(point)
+    for i in range(len(point)):
+        # Perturb the point along the i-th axis
+        positions_plus = np.array(point)
+        positions_plus[i] += h
+        positions_minus = np.array(point)
+        positions_minus[i] -= h
+
+        # Calculate the gradient using finite differences
+        grad[i] = (func(positions_plus, dimensions) - func(positions_minus, dimensions)) / (2 * h)
+
+    return grad
+
+def clip_gradients(gradients, clip_value):
+    clipped_gradients = np.clip(gradients, -clip_value, clip_value)
+    return clipped_gradients
+
+# Perform decentralized stochastic gradient descent
+def run(probability, positions):
+    disconnect_chance = probability
+    initial_positions = positions
+    for round in range(num_rounds):
+        updated_positions = initial_positions.copy()
+
+        G = nx.complete_graph(num_nodes)
+        for edge in G.edges():
+
+            if np.random.rand() <= disconnect_chance:
+                G.edges[edge]['value'] = 0 #0 is false, the edge is not working (faltering)
+            else: G.edges[edge]['value'] = 1 #1 is true, the edge is working
+
+        # Perform averaging of gradients with non-straggler neighbors
+        for node in G.nodes():
+            node_edges = G.edges(node)
+            neighbor_positions = []
+            for edge in node_edges:
+                if G.edges[edge]['value'] == 1: #Only use edge info if it is working
+                    distance = np.linalg.norm(np.array(updated_positions[node]) - np.array(updated_positions[edge[1]]))
+                    if distance <= neighborhood_radius:
+                        neighbor_positions.append(updated_positions[edge[1]])
+
+            if neighbor_positions:
+                neighbor_positions.append(updated_positions[node])
+                average_neighbor_position = np.mean(neighbor_positions, axis=0)
+                updated_positions[node] = average_neighbor_position
+
+            grad = gradient(function, updated_positions[node], h=1e-5)
+            grad = clip_gradients(grad, clip_value=1.0)  # Adjust the clip value as needed
+            updated_positions[node] -= learning_rate * grad
+            # Calculate the val and add it to the respective node's val list
+            node_val = function(updated_positions[node], dimensions)
+            vals[node].append(node_val)
+
+        initial_positions = updated_positions  # Update positions for the next epoch
+
+        # Append the current positions to the paths
+        paths.append(initial_positions.copy())
+        
+    avg_vals = [vals[i][-1] for i in range(num_nodes)]
+    avg_val = np.mean(avg_vals)
+    l2_norm = np.linalg.norm(avg_val - 0)
+    return l2_norm
+
+l2_norms = []
+probabilities = [] # Increments of 0.05 for probabilities
+for i in range(11):
+    l2_norm = run(disconnect_chance, initial_positions)
+    l2_norms.append(l2_norm)
+    probabilities.append(disconnect_chance)
+    print(disconnect_chance, ": ", l2_norm)
+    disconnect_chance += 0.1
+    disconnect_chance = round(disconnect_chance, 3)
+
+# Create the plot
+plt.plot(probabilities, l2_norms)
+
+# Add labels and title
+plt.xlabel('Chance of Falter')
+plt.ylabel('L2 Norms') # Lower L2 Norm is better
+plt.ylim(0, 10)
+plt.xlim(0, 1)
+plt.show()
+
+# # Create a 3D plot of the function
+# x = np.linspace(-5, 5, 100)  # Adjusted range for X
+# y = np.linspace(-5, 5, 100)  # Adjusted range for Y
+# X, Y = np.meshgrid(x, y)
+# Z = np.vectorize(function)(X, Y)
+
+#
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+#
+# # Set the viewing angle for the 3D plot
+# ax.view_init(elev=12, azim=-58)
+#
+# ax.plot_surface(X, Y, Z, cmap='viridis', alpha=0.8)
+#
+# # Plot the convergence paths for all nodes
+# paths = np.array(paths)
+# for i in range(num_nodes):
+#     path = paths[:, i, :]
+#     ax.plot(path[:, 0], path[:, 1], 0, linewidth=2)
+#
+# ax.set_xlabel('X')
+# ax.set_ylabel('Y')
+# ax.set_zlabel('Z')
+# ax.set_title('Convergence Paths')
